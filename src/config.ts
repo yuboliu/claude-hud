@@ -190,6 +190,7 @@ export interface HudConfig {
     usageValue: UsageValueMode;
     usageBarEnabled: boolean;
     showResetLabel: boolean;
+    showUsageSyncedAt: boolean;
     usageCompact: boolean;
     showTools: boolean;
     showSkills: boolean;
@@ -309,6 +310,7 @@ export const DEFAULT_CONFIG: HudConfig = {
     usageValue: 'percent',
     usageBarEnabled: true,
     showResetLabel: true,
+    showUsageSyncedAt: true,
     usageCompact: false,
     showTools: false,
     showSkills: false,
@@ -776,6 +778,9 @@ export function mergeConfig(userConfig: Partial<HudConfig>): HudConfig {
     showResetLabel: typeof migrated.display?.showResetLabel === 'boolean'
       ? migrated.display.showResetLabel
       : DEFAULT_CONFIG.display.showResetLabel,
+    showUsageSyncedAt: typeof migrated.display?.showUsageSyncedAt === 'boolean'
+      ? migrated.display.showUsageSyncedAt
+      : DEFAULT_CONFIG.display.showUsageSyncedAt,
     usageCompact: typeof migrated.display?.usageCompact === 'boolean'
       ? migrated.display.usageCompact
       : DEFAULT_CONFIG.display.usageCompact,

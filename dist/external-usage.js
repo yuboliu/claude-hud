@@ -228,6 +228,7 @@ export function getUsageFromExternalSnapshot(config, now = Date.now()) {
             sevenDay,
             fiveHourResetAt,
             sevenDayResetAt,
+            syncedAt: new Date(updatedAt),
         };
         if (balanceLabel !== null) {
             usage.balanceLabel = balanceLabel;

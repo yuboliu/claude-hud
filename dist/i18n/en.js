@@ -29,6 +29,10 @@ export const en = {
     "format.tokPerSec": "tok/s",
     "format.justNow": "just now",
     "format.relativeTime": "{value} ago",
+    "format.syncedJustNow": "synced just now",
+    "format.syncedMinutesAgo": "synced {count}m ago",
+    "format.syncedHoursAgo": "synced {count}h ago",
+    "format.syncedDaysAgo": "synced {count}d ago",
     // Init
     "init.initializing": "[claude-hud] Initializing...",
     "init.macosNote": "[claude-hud] Note: On macOS, you may need to restart Claude Code for the HUD to appear.",

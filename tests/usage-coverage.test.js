@@ -309,3 +309,39 @@ test('renderUsageLine elapsedAndAbsolute format for limit uses absolute', () => 
   assert.ok(line.includes('Limit reached'));
   assert.ok(line.includes('resets at'));
 });
+
+test('renderUsageLine appends synced-at hint when usageData carries syncedAt', () => {
+  const ctx = baseContext();
+  ctx.usageData.syncedAt = new Date(Date.now() - 3 * 60 * 1000);
+  const line = stripAnsi(renderUsageLine(ctx) ?? '');
+  assert.ok(line.includes('synced 3m ago'), `expected sync hint in: ${line}`);
+});
+
+test('renderUsageLine shows just-now sync hint for fresh snapshots', () => {
+  const ctx = baseContext();
+  ctx.usageData.syncedAt = new Date(Date.now() - 10 * 1000);
+  const line = stripAnsi(renderUsageLine(ctx) ?? '');
+  assert.ok(line.includes('synced just now'), `expected just-now hint in: ${line}`);
+});
+
+test('renderUsageLine shows hours/days sync hints for older snapshots', () => {
+  const ctx = baseContext();
+  ctx.usageData.syncedAt = new Date(Date.now() - 2 * 3600 * 1000);
+  assert.ok(stripAnsi(renderUsageLine(ctx) ?? '').includes('synced 2h ago'));
+  ctx.usageData.syncedAt = new Date(Date.now() - 2 * 86400 * 1000);
+  assert.ok(stripAnsi(renderUsageLine(ctx) ?? '').includes('synced 2d ago'));
+});
+
+test('renderUsageLine omits sync hint without syncedAt (live stdin usage)', () => {
+  const ctx = baseContext();
+  const line = stripAnsi(renderUsageLine(ctx) ?? '');
+  assert.ok(!line.includes('synced'), `unexpected sync hint in: ${line}`);
+});
+
+test('renderUsageLine omits sync hint when showUsageSyncedAt is false', () => {
+  const ctx = baseContext();
+  ctx.config.display.showUsageSyncedAt = false;
+  ctx.usageData.syncedAt = new Date(Date.now() - 3 * 60 * 1000);
+  const line = stripAnsi(renderUsageLine(ctx) ?? '');
+  assert.ok(!line.includes('synced'), `unexpected sync hint in: ${line}`);
+});

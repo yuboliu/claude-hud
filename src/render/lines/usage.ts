@@ -4,7 +4,7 @@ import type { MessageKey } from "../../i18n/types.js";
 import { shouldHideUsage } from "../../stdin.js";
 import { critical, label, getQuotaColor, quotaBar, RESET } from "../colors.js";
 import { getAdaptiveBarWidth } from "../../utils/terminal.js";
-import { t } from "../../i18n/index.js";
+import { t, interpolate } from "../../i18n/index.js";
 import {
   progressLabel,
   type ProgressLabelInput,
@@ -16,6 +16,48 @@ const FIVE_HOUR_WINDOW_MS = 5 * 60 * 60 * 1000;
 const SEVEN_DAY_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 
 export function renderUsageLine(
+  ctx: RenderContext,
+  labelOptions: ProgressLabelInput = {},
+): string | null {
+  const line = renderUsageLineCore(ctx, labelOptions);
+  if (line === null) {
+    return null;
+  }
+  return appendSyncedAt(line, ctx);
+}
+
+/**
+ * Appends a "synced Xm ago" hint (cc-switch style: just now / minutes /
+ * hours / days) when the usage data carries a `syncedAt` timestamp —
+ * i.e. it came from an external sidecar snapshot rather than live stdin
+ * rate_limits. Configurable via `display.showUsageSyncedAt`.
+ */
+function appendSyncedAt(line: string, ctx: RenderContext): string {
+  if (ctx.config?.display?.showUsageSyncedAt === false) {
+    return line;
+  }
+  const syncedAt = ctx.usageData?.syncedAt;
+  if (!(syncedAt instanceof Date) || Number.isNaN(syncedAt.getTime())) {
+    return line;
+  }
+  return `${line} ${label(`· ${formatSyncedAgo(syncedAt)}`, ctx.config?.colors)}`;
+}
+
+function formatSyncedAgo(syncedAt: Date, now: number = Date.now()): string {
+  const diffSec = Math.max(0, Math.floor((now - syncedAt.getTime()) / 1000));
+  if (diffSec < 60) {
+    return t("format.syncedJustNow");
+  }
+  if (diffSec < 3600) {
+    return interpolate(t("format.syncedMinutesAgo"), { count: Math.floor(diffSec / 60) });
+  }
+  if (diffSec < 86400) {
+    return interpolate(t("format.syncedHoursAgo"), { count: Math.floor(diffSec / 3600) });
+  }
+  return interpolate(t("format.syncedDaysAgo"), { count: Math.floor(diffSec / 86400) });
+}
+
+function renderUsageLineCore(
   ctx: RenderContext,
   labelOptions: ProgressLabelInput = {},
 ): string | null {

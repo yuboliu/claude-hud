@@ -33,6 +33,10 @@ export const zhHant: Messages = {
   "format.tokPerSec": "tok/s",
   "format.justNow": "剛剛",
   "format.relativeTime": "{value} 前",
+  "format.syncedJustNow": "剛剛同步",
+  "format.syncedMinutesAgo": "{count} 分鐘前同步",
+  "format.syncedHoursAgo": "{count} 小時前同步",
+  "format.syncedDaysAgo": "{count} 天前同步",
 
   // Init
   "init.initializing": "[claude-hud] 正在初始化...",

@@ -97,6 +97,12 @@ export interface UsageData {
   balanceLabel?: string | null;  // optional raw balance text (e.g. "¥6.35")
   /** Model-scoped weekly windows (e.g. Fable) from stdin rate_limits.model_scoped. */
   scopedWindows?: ScopedUsageWindow[];
+  /**
+   * When the usage data was last synced from its source. Only set for
+   * sidecar-fed data (external snapshot `updated_at`); stdin rate_limits
+   * are live-per-render so they leave this null.
+   */
+  syncedAt?: Date | null;
 }
 
 /** One model-scoped weekly quota window (e.g. label "Fable", used percent 0-100). */

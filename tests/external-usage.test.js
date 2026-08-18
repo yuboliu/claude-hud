@@ -79,6 +79,7 @@ test('getUsageFromExternalSnapshot parses a fresh snapshot', async () => {
       sevenDay: 85,
       fiveHourResetAt: new Date(resetAt),
       sevenDayResetAt: new Date('2026-04-27T12:00:00.000Z'),
+      syncedAt: new Date(updatedAt),
     });
   } finally {
     await cleanup();
@@ -335,7 +336,7 @@ test('writeExternalUsageSnapshot output can be read by getUsageFromExternalSnaps
     writeExternalUsageSnapshot(makeWriteConfig(filePath), makeUsage(), now);
     const usage = getUsageFromExternalSnapshot(makeConfig(filePath), now + 1000);
 
-    assert.deepEqual(usage, makeUsage());
+    assert.deepEqual(usage, makeUsage({ syncedAt: new Date(now) }));
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
@@ -356,6 +357,7 @@ test('getUsageFromExternalSnapshot parses optional balance labels', async () => 
       fiveHourResetAt: null,
       sevenDayResetAt: null,
       balanceLabel: '¥6.35',
+      syncedAt: new Date(updatedAt),
     });
   } finally {
     await cleanup();
@@ -459,6 +461,7 @@ test('getUsageFromExternalSnapshot accepts a scoped-only snapshot', async () => 
       fiveHourResetAt: null,
       sevenDayResetAt: null,
       scopedWindows: [{ label: 'Fable', percent: 57, resetAt: null }],
+      syncedAt: new Date(updatedAt),
     });
   } finally {
     await cleanup();

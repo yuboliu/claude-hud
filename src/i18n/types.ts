@@ -29,6 +29,10 @@ export type MessageKey =
   | "format.tokPerSec"
   | "format.justNow"
   | "format.relativeTime"
+  | "format.syncedJustNow"
+  | "format.syncedMinutesAgo"
+  | "format.syncedHoursAgo"
+  | "format.syncedDaysAgo"
   // Init
   | "init.initializing"
   | "init.macosNote";
