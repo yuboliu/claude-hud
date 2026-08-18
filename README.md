@@ -9,6 +9,55 @@ A Claude Code plugin that shows what's happening — context usage, active tools
 
 > 🌐 English | [中文文档](README.zh.md)
 
+---
+
+> ## 🍴 About this fork ([yuboliu/claude-hud](https://github.com/yuboliu/claude-hud))
+>
+> This fork tracks upstream [jarrodwatts/claude-hud](https://github.com/jarrodwatts/claude-hud) and adds:
+>
+> ### 1. "Synced Xm ago" hint for external usage snapshots
+>
+> Sidecar-fed usage (`display.externalUsagePath`) can be minutes old, but upstream gave no hint about data freshness. This fork surfaces the snapshot's `updated_at` as a relative sync-time suffix on the usage line (design follows [cc-switch](https://github.com/farion1231/cc-switch)'s quota footer: just now / minutes / hours / days):
+>
+> ```
+> Usage ███████░░░ 74% (resets in 2h 56m) | Weekly █████░░░░░ 45% (resets in 5d) · synced 2m ago
+> ```
+>
+> - `UsageData.syncedAt` is populated only by `getUsageFromExternalSnapshot`; live stdin `rate_limits` stay `null` and never show the suffix.
+> - Opt out with `display.showUsageSyncedAt: false` in `~/.claude/plugins/claude-hud/config.json`.
+> - i18n: `en`, `zh-Hans`, `zh-Hant`.
+>
+> ### 2. Kimi For Coding usage feeder
+>
+> [`examples/external-usage/kimi-usage-snapshot.mjs`](examples/external-usage/kimi-usage-snapshot.mjs) polls the Kimi For Coding token-plan quota endpoint (`GET https://api.kimi.com/coding/v1/usages`, same request shape and parsing as cc-switch's `coding_plan.rs::query_kimi`) and writes a snapshot in the `display.externalUsagePath` format — so Claude Code sessions running against Kimi via `ANTHROPIC_BASE_URL` + `ANTHROPIC_AUTH_TOKEN` (where the stdin `rate_limits` payload is absent) still show 5h / weekly usage in the HUD. See [examples/external-usage/README.md](examples/external-usage/README.md) for setup.
+>
+> ### 3. One-command install script
+>
+> [`scripts/install-fork.sh`](scripts/install-fork.sh) registers this fork as a local marketplace, (re)installs the plugin, and configures the statusLine — idempotent, safe to re-run after `git push`:
+>
+> ```bash
+> git clone https://github.com/yuboliu/claude-hud.git
+> cd claude-hud
+> scripts/install-fork.sh                # marketplace + plugin + statusline
+> scripts/install-fork.sh --with-kimi    # + Kimi usage feeder
+> scripts/install-fork.sh --with-cron    # + crontab refresh every 3 min
+> scripts/install-fork.sh --local /path/to/clone   # register from a local clone
+> ```
+>
+> What it does (each step is skipped/no-op'd when already applied):
+>
+> 1. Removes the upstream `claude-hud` marketplace registration if present, then `claude plugin marketplace add yuboliu/claude-hud`.
+> 2. `claude plugin install claude-hud@claude-hud` (user scope).
+> 3. Writes a version-agnostic dynamic-lookup `statusLine` command into `~/.claude/settings.json` (timestamped backup first).
+> 4. `--with-kimi`: installs the feeder into `~/.claude/plugins/claude-hud/`, points `externalUsagePath` at its snapshot, and does a first fetch.
+> 5. `--with-cron`: installs a `*/3 * * * *` crontab entry for the feeder.
+> 6. Smoke-tests the installed statusline.
+>
+> Requires: `claude` CLI, Node.js ≥ 18, and (for `--with-kimi`) `env.ANTHROPIC_AUTH_TOKEN` in `~/.claude/settings.json`.
+>
+> ---
+
+
 ## Install
 
 Inside a Claude Code instance, run the following commands:
