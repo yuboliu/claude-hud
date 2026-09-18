@@ -40,7 +40,7 @@ function stripAnsi(str) {
  */
 function expectedCacheExpiry(anchorAt, ttlSeconds) {
   const expiresAt = new Date(anchorAt.getTime() + ttlSeconds * 1000);
-  return `Cache ⏱ at ${expiresAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+  return `Cache ⏱ until ${expiresAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
 }
 
 function baseContext() {
@@ -1065,6 +1065,70 @@ test('renderSessionLine composes the effort label with a custom provider (compac
   assert.ok(line.includes('[MyProxy | Claude Opus 4.6 ◕ ultracode(xhigh)]'), `got: ${line}`);
 });
 
+test('renderProjectLine renders only the effort symbol when effortFormat is symbol', () => {
+  const ctx = baseContext();
+  ctx.stdin.model = { display_name: 'Claude Opus 4.6' };
+  ctx.config.display.effortFormat = 'symbol';
+  ctx.effortLevel = 'high';
+  ctx.effortSymbol = '◑';
+  const line = stripAnsi(renderProjectLine(ctx) ?? '');
+  assert.ok(line.includes('[Claude Opus 4.6 ◑]'), `got: ${line}`);
+  assert.ok(!line.includes('high'), `level text must be dropped: ${line}`);
+});
+
+test('renderProjectLine renders only the effort level when effortFormat is text', () => {
+  const ctx = baseContext();
+  ctx.stdin.model = { display_name: 'Claude Opus 4.6' };
+  ctx.config.display.effortFormat = 'text';
+  ctx.effortLevel = 'high';
+  ctx.effortSymbol = '◑';
+  const line = stripAnsi(renderProjectLine(ctx) ?? '');
+  assert.ok(line.includes('[Claude Opus 4.6 high]'), `got: ${line}`);
+  assert.ok(!line.includes('◑'), `symbol must be dropped: ${line}`);
+});
+
+test('renderProjectLine keeps full effort output when effortFormat is full', () => {
+  const ctx = baseContext();
+  ctx.stdin.model = { display_name: 'Claude Opus 4.6' };
+  ctx.config.display.effortFormat = 'full';
+  ctx.effortLevel = 'high';
+  ctx.effortSymbol = '◑';
+  const line = stripAnsi(renderProjectLine(ctx) ?? '');
+  assert.ok(line.includes('[Claude Opus 4.6 ◑ high]'), `got: ${line}`);
+});
+
+test('renderProjectLine keeps the full ultracode label under effortFormat symbol', () => {
+  const ctx = baseContext();
+  ctx.stdin.model = { display_name: 'Claude Opus 4.6' };
+  ctx.config.display.effortFormat = 'symbol';
+  ctx.effortLevel = 'ultracode(xhigh)';
+  ctx.effortSymbol = '◕';
+  const line = stripAnsi(renderProjectLine(ctx) ?? '');
+  assert.ok(line.includes('[Claude Opus 4.6 ◕ ultracode(xhigh)]'), `got: ${line}`);
+});
+
+test('renderProjectLine falls back to the level text under effortFormat symbol without a known symbol', () => {
+  const ctx = baseContext();
+  ctx.stdin.model = { display_name: 'Claude Opus 4.6' };
+  ctx.config.display.effortFormat = 'symbol';
+  ctx.effortLevel = 'unknown';
+  ctx.effortSymbol = '';
+  const line = stripAnsi(renderProjectLine(ctx) ?? '');
+  assert.ok(line.includes('[Claude Opus 4.6 unknown]'), `got: ${line}`);
+});
+
+test('renderSessionLine renders only the effort symbol when effortFormat is symbol (compact layout)', () => {
+  const ctx = baseContext();
+  ctx.config.lineLayout = 'compact';
+  ctx.stdin.model = { display_name: 'Claude Opus 4.6' };
+  ctx.config.display.effortFormat = 'symbol';
+  ctx.effortLevel = 'high';
+  ctx.effortSymbol = '◑';
+  const line = stripAnsi(renderSessionLine(ctx));
+  assert.ok(line.includes('[Claude Opus 4.6 ◑]'), `got: ${line}`);
+  assert.ok(!line.includes('high'), `level text must be dropped: ${line}`);
+});
+
 test('renderProjectLine uses configurable element colors', () => {
   const ctx = baseContext();
   ctx.stdin.cwd = '/tmp/my-project';
@@ -1262,6 +1326,42 @@ test('renderSessionLine shows native cost when stdin cost.total_cost_usd is avai
 
   const line = stripAnsi(renderSessionLine(ctx));
   assert.ok(line.includes('Cost $5.47'));
+});
+
+test('renderSessionLine shows the daily cost when showDailyCost is enabled', async () => {
+  const configDir = await mkdtemp(path.join(tmpdir(), 'claude-hud-daily-render-'));
+  const originalConfigDir = process.env.CLAUDE_CONFIG_DIR;
+  process.env.CLAUDE_CONFIG_DIR = configDir;
+  try {
+    const ctx = baseContext();
+    ctx.config.display.showDailyCost = true;
+    ctx.stdin.session_id = 'render-test-session';
+    ctx.stdin.cost = { total_cost_usd: 2.0 };
+
+    // First render seeds the baseline, second render accrues the increment.
+    renderSessionLine(ctx);
+    ctx.stdin.cost = { total_cost_usd: 3.25 };
+    const line = stripAnsi(renderSessionLine(ctx));
+    assert.ok(line.includes('Today $1.25'), `expected daily cost, got: ${line}`);
+  } finally {
+    if (originalConfigDir === undefined) {
+      delete process.env.CLAUDE_CONFIG_DIR;
+    } else {
+      process.env.CLAUDE_CONFIG_DIR = originalConfigDir;
+    }
+    await rm(configDir, { recursive: true, force: true });
+  }
+});
+
+test('renderSessionLine keeps the daily cost hidden by default', () => {
+  const ctx = baseContext();
+  ctx.stdin.session_id = 'render-test-session';
+  ctx.stdin.cost = { total_cost_usd: 5.47 };
+  ctx.config.display.showCost = true;
+
+  const line = stripAnsi(renderSessionLine(ctx));
+  assert.ok(line.includes('Cost $5.47'));
+  assert.ok(!line.includes('Today'), `daily cost must remain opt-in: ${line}`);
 });
 
 test('renderProjectLine falls back to an estimate when native cost is absent', () => {

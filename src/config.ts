@@ -1,12 +1,16 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
-import { getHudPluginDir } from './claude-config-dir.js';
+import { getClaudeConfigDir, getHudPluginDir } from './claude-config-dir.js';
 import { createDebug } from './debug.js';
 import type { Language } from './i18n/types.js';
 import { MAX_TERMINAL_WIDTH } from './utils/terminal.js';
+import { sanitizeDisplayText } from './utils/sanitize.js';
 
 const debug = createDebug('config');
+const MAX_CONFIG_FILE_BYTES = 64 * 1024;
+const MAX_CONFIG_NESTING_DEPTH = 8;
+const UNSAFE_CONFIG_KEYS = new Set(['__proto__', 'prototype', 'constructor']);
 
 export type LineLayoutType = 'compact' | 'expanded';
 
@@ -23,6 +27,19 @@ export type GitBranchOverflowMode = 'truncate' | 'wrap';
  *   short:   Strip context suffix AND "Claude " prefix (e.g. "Opus 4.6")
  */
 export type ModelFormatMode = 'full' | 'compact' | 'short';
+
+/**
+ * Controls how the reasoning effort renders in the model badge when
+ * `display.showEffortLevel` is enabled.
+ *
+ *   full:   Symbol + level text (e.g. "◑ high"); default, matches the
+ *           pre-option output byte-for-byte
+ *   symbol: Symbol only (e.g. "◑"). Ultracode keeps the full form because its
+ *           marker lives in the level text, and levels without a known symbol
+ *           fall back to the level text
+ *   text:   Level text only (e.g. "high")
+ */
+export type EffortFormatMode = 'full' | 'symbol' | 'text';
 export type TimeFormatMode = 'relative' | 'absolute' | 'both' | 'elapsed' | 'elapsedAndAbsolute';
 export type CustomLinePosition = 'first' | 'last';
 // Hour cycle for wall-clock time display; 'auto' defers to the system locale.
@@ -183,6 +200,9 @@ export interface HudConfig {
     // Also show cost for routed providers (Bedrock/Vertex) that `showCost`
     // hides by default. Requires `showCost` too. Default off.
     showRoutedCost: boolean;
+    // Accumulate the native stdin cost into a per-day ledger and show
+    // today's cumulative spend across sessions. Default off.
+    showDailyCost: boolean;
     showDuration: boolean;
     showSpeed: boolean;
     showTokenBreakdown: boolean;
@@ -192,6 +212,9 @@ export interface HudConfig {
     showResetLabel: boolean;
     showUsageSyncedAt: boolean;
     usageCompact: boolean;
+    // Show the per-model weekly windows (`rate_limits.model_scoped`, e.g. Fable)
+    // next to the 5h/7d windows. Set to false to keep only 5h/7d. Default on.
+    showModelScopedUsage: boolean;
     showTools: boolean;
     showSkills: boolean;
     showMcp: boolean;
@@ -209,6 +232,8 @@ export interface HudConfig {
     authUserLength: number;
     showClaudeCodeVersion: boolean;
     showEffortLevel: boolean;
+    // How the effort renders when showEffortLevel is on (see EffortFormatMode).
+    effortFormat: EffortFormatMode;
     showMemoryUsage: boolean;
     showPromptCache: boolean;
     // Compatibility fallback used only until transcript tier detection has a
@@ -303,6 +328,7 @@ export const DEFAULT_CONFIG: HudConfig = {
     showConfigCounts: false,
     showCost: false,
     showRoutedCost: false,
+    showDailyCost: false,
     showDuration: false,
     showSpeed: false,
     showTokenBreakdown: true,
@@ -312,6 +338,7 @@ export const DEFAULT_CONFIG: HudConfig = {
     showResetLabel: true,
     showUsageSyncedAt: true,
     usageCompact: false,
+    showModelScopedUsage: true,
     showTools: false,
     showSkills: false,
     showMcp: false,
@@ -325,6 +352,7 @@ export const DEFAULT_CONFIG: HudConfig = {
     authUserLength: 8,
     showClaudeCodeVersion: false,
     showEffortLevel: false,
+    effortFormat: 'full',
     showMemoryUsage: false,
     showPromptCache: false,
     promptCacheTtlSeconds: 300,
@@ -380,6 +408,20 @@ export function getConfigPath(): string {
   return path.join(getHudPluginDir(homeDir), 'config.json');
 }
 
+/**
+ * Optional per-config-directory overrides, layered on top of the main config.
+ *
+ * Users who run several Claude config directories side by side (via
+ * CLAUDE_CONFIG_DIR) commonly symlink `plugins/` to one shared location, which
+ * makes `plugins/claude-hud/config.json` the very same physical file for every
+ * directory. This file lives outside `plugins/`, so it stays per-directory and
+ * can override any part of the shared config.
+ */
+export function getConfigOverridePath(): string {
+  const homeDir = os.homedir();
+  return path.join(getClaudeConfigDir(homeDir), 'claude-hud.json');
+}
+
 function validatePathLevels(value: unknown): value is PathLevels {
   return value === 1 || value === 2 || value === 3 || value === 'full';
 }
@@ -410,6 +452,10 @@ function validateLanguage(value: unknown): value is Language {
 
 function validateModelFormat(value: unknown): value is ModelFormatMode {
   return value === 'full' || value === 'compact' || value === 'short';
+}
+
+function validateEffortFormat(value: unknown): value is EffortFormatMode {
+  return value === 'full' || value === 'symbol' || value === 'text';
 }
 
 function validateTimeFormat(value: unknown): value is TimeFormatMode {
@@ -661,6 +707,12 @@ function validateOptionalPath(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
 }
 
+function validateDisplayText(value: unknown, maxLength: number, fallback: string): string {
+  return typeof value === 'string'
+    ? sanitizeDisplayText(value).slice(0, maxLength)
+    : fallback;
+}
+
 function validateFreshnessMs(value: unknown): number {
   if (typeof value !== 'number' || !Number.isFinite(value)) {
     return DEFAULT_CONFIG.display.externalUsageFreshnessMs;
@@ -757,6 +809,9 @@ export function mergeConfig(userConfig: Partial<HudConfig>): HudConfig {
     showRoutedCost: typeof migrated.display?.showRoutedCost === 'boolean'
       ? migrated.display.showRoutedCost
       : DEFAULT_CONFIG.display.showRoutedCost,
+    showDailyCost: typeof migrated.display?.showDailyCost === 'boolean'
+      ? migrated.display.showDailyCost
+      : DEFAULT_CONFIG.display.showDailyCost,
     showDuration: typeof migrated.display?.showDuration === 'boolean'
       ? migrated.display.showDuration
       : DEFAULT_CONFIG.display.showDuration,
@@ -784,6 +839,9 @@ export function mergeConfig(userConfig: Partial<HudConfig>): HudConfig {
     usageCompact: typeof migrated.display?.usageCompact === 'boolean'
       ? migrated.display.usageCompact
       : DEFAULT_CONFIG.display.usageCompact,
+    showModelScopedUsage: typeof migrated.display?.showModelScopedUsage === 'boolean'
+      ? migrated.display.showModelScopedUsage
+      : DEFAULT_CONFIG.display.showModelScopedUsage,
     showTools: typeof migrated.display?.showTools === 'boolean'
       ? migrated.display.showTools
       : DEFAULT_CONFIG.display.showTools,
@@ -826,6 +884,9 @@ export function mergeConfig(userConfig: Partial<HudConfig>): HudConfig {
     showEffortLevel: typeof migrated.display?.showEffortLevel === 'boolean'
       ? migrated.display.showEffortLevel
       : DEFAULT_CONFIG.display.showEffortLevel,
+    effortFormat: validateEffortFormat(migrated.display?.effortFormat)
+      ? migrated.display.effortFormat
+      : DEFAULT_CONFIG.display.effortFormat,
     showMemoryUsage: typeof migrated.display?.showMemoryUsage === 'boolean'
       ? migrated.display.showMemoryUsage
       : DEFAULT_CONFIG.display.showMemoryUsage,
@@ -882,21 +943,27 @@ export function mergeConfig(userConfig: Partial<HudConfig>): HudConfig {
     modelFormat: validateModelFormat(migrated.display?.modelFormat)
       ? migrated.display.modelFormat
       : DEFAULT_CONFIG.display.modelFormat,
-    modelOverride: typeof migrated.display?.modelOverride === 'string'
-      ? migrated.display.modelOverride.slice(0, 80)
-      : DEFAULT_CONFIG.display.modelOverride,
+    modelOverride: validateDisplayText(
+      migrated.display?.modelOverride,
+      80,
+      DEFAULT_CONFIG.display.modelOverride,
+    ),
     modelSource: ['auto', 'stdin', 'transcript'].includes(migrated.display?.modelSource as string)
       ? (migrated.display!.modelSource as 'auto' | 'stdin' | 'transcript')
       : DEFAULT_CONFIG.display.modelSource,
     showProvider: typeof migrated.display?.showProvider === 'boolean'
       ? migrated.display.showProvider
       : DEFAULT_CONFIG.display.showProvider,
-    providerName: typeof migrated.display?.providerName === 'string'
-      ? migrated.display.providerName.slice(0, 40)
-      : DEFAULT_CONFIG.display.providerName,
-    customLine: typeof migrated.display?.customLine === 'string'
-      ? migrated.display.customLine.slice(0, 80)
-      : DEFAULT_CONFIG.display.customLine,
+    providerName: validateDisplayText(
+      migrated.display?.providerName,
+      40,
+      DEFAULT_CONFIG.display.providerName,
+    ),
+    customLine: validateDisplayText(
+      migrated.display?.customLine,
+      80,
+      DEFAULT_CONFIG.display.customLine,
+    ),
     customLinePosition: validateCustomLinePosition(migrated.display?.customLinePosition)
       ? migrated.display.customLinePosition
       : DEFAULT_CONFIG.display.customLinePosition,
@@ -912,9 +979,11 @@ export function mergeConfig(userConfig: Partial<HudConfig>): HudConfig {
     showAdvisor: typeof migrated.display?.showAdvisor === 'boolean'
       ? migrated.display.showAdvisor
       : DEFAULT_CONFIG.display.showAdvisor,
-    advisorOverride: typeof migrated.display?.advisorOverride === 'string'
-      ? migrated.display.advisorOverride.slice(0, 80)
-      : DEFAULT_CONFIG.display.advisorOverride,
+    advisorOverride: validateDisplayText(
+      migrated.display?.advisorOverride,
+      80,
+      DEFAULT_CONFIG.display.advisorOverride,
+    ),
     autoCompactWindow: validateAutoCompactWindow(migrated.display?.autoCompactWindow),
   };
 
@@ -963,19 +1032,100 @@ export function mergeConfig(userConfig: Partial<HudConfig>): HudConfig {
   return { language, lineLayout, showSeparators, pathLevels, maxWidth, forceMaxWidth, elementOrder, projectLineOrder, gitStatus, jjStatus, display, colors };
 }
 
-export async function loadConfig(): Promise<HudConfig> {
-  const configPath = getConfigPath();
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
 
-  try {
-    if (!fs.existsSync(configPath)) {
-      return mergeConfig({});
-    }
-
-    const content = fs.readFileSync(configPath, 'utf-8');
-    const userConfig = JSON.parse(content) as Partial<HudConfig>;
-    return mergeConfig(userConfig);
-  } catch (err) {
-    debug('Failed to load config from %s, using defaults:', configPath, err instanceof Error ? err.message : err);
-    return mergeConfig({});
+function hasSafeConfigShape(value: unknown, depth = 0): boolean {
+  if (depth > MAX_CONFIG_NESTING_DEPTH) {
+    return false;
   }
+  if (Array.isArray(value)) {
+    return value.every(item => hasSafeConfigShape(item, depth + 1));
+  }
+  if (!isPlainObject(value)) {
+    return true;
+  }
+  return Object.entries(value).every(([key, child]) => (
+    !UNSAFE_CONFIG_KEYS.has(key) && hasSafeConfigShape(child, depth + 1)
+  ));
+}
+
+/**
+ * Layer `override` on top of `base`. Nested config sections (display, colors,
+ * gitStatus, …) merge key by key so an override only has to name what it
+ * changes; arrays and scalars replace the base value wholesale.
+ */
+function mergeOverrides(
+  base: Record<string, unknown>,
+  override: Record<string, unknown>,
+): Record<string, unknown> {
+  const result = Object.assign(Object.create(null), base) as Record<string, unknown>;
+
+  for (const [key, value] of Object.entries(override)) {
+    const current = result[key];
+    result[key] = isPlainObject(current) && isPlainObject(value)
+      ? mergeOverrides(current, value)
+      : value;
+  }
+
+  return result;
+}
+
+function readConfigFile(configPath: string): Record<string, unknown> | null {
+  try {
+    // Validate and read through a single open file descriptor so a path swap
+    // (symlink or growth) between check and read can't bypass either guard.
+    // O_NOFOLLOW is the symlink defense on POSIX (open fails with ELOOP,
+    // caught below); it is undefined on Windows, so it's OR'd in only when
+    // present.
+    const flags = fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0);
+    const fd = fs.openSync(configPath, flags);
+    try {
+      const stat = fs.fstatSync(fd);
+      if (!stat.isFile()) {
+        debug('Ignoring %s: expected a regular, non-symlink file', configPath);
+        return null;
+      }
+
+      // Bound the read itself (not just the stat) so a file that grows after
+      // fstat can't slip an oversized payload past the cap; loop until done
+      // so a legal short read can't under-count an oversized file.
+      const buf = Buffer.alloc(MAX_CONFIG_FILE_BYTES + 1);
+      let off = 0;
+      let n = 0;
+      do {
+        n = fs.readSync(fd, buf, off, buf.length - off, off);
+        off += n;
+      } while (n > 0 && off < buf.length);
+      if (off > MAX_CONFIG_FILE_BYTES) {
+        debug('Ignoring %s: file exceeds %d bytes', configPath, MAX_CONFIG_FILE_BYTES);
+        return null;
+      }
+
+      const content = buf.subarray(0, off).toString('utf-8');
+      const parsed: unknown = JSON.parse(content);
+      if (!isPlainObject(parsed) || !hasSafeConfigShape(parsed)) {
+        debug('Ignoring %s: expected a bounded JSON object without unsafe keys', configPath);
+        return null;
+      }
+      return parsed;
+    } finally {
+      fs.closeSync(fd);
+    }
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+      return null;
+    }
+    debug('Failed to load config from %s, ignoring it:', configPath, err instanceof Error ? err.message : err);
+    return null;
+  }
+}
+
+export async function loadConfig(): Promise<HudConfig> {
+  const base = readConfigFile(getConfigPath()) ?? {};
+  const override = readConfigFile(getConfigOverridePath());
+  const userConfig = override ? mergeOverrides(base, override) : base;
+
+  return mergeConfig(userConfig as Partial<HudConfig>);
 }
