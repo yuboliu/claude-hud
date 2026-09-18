@@ -31,7 +31,13 @@ A Claude Code plugin that shows what's happening — context usage, active tools
 >
 > [`examples/external-usage/kimi-usage-snapshot.mjs`](examples/external-usage/kimi-usage-snapshot.mjs) polls the Kimi For Coding token-plan quota endpoint (`GET https://api.kimi.com/coding/v1/usages`, same request shape and parsing as cc-switch's `coding_plan.rs::query_kimi`) and writes a snapshot in the `display.externalUsagePath` format — so Claude Code sessions running against Kimi via `ANTHROPIC_BASE_URL` + `ANTHROPIC_AUTH_TOKEN` (where the stdin `rate_limits` payload is absent) still show 5h / weekly usage in the HUD. See [examples/external-usage/README.md](examples/external-usage/README.md) for setup.
 >
-> ### 3. One-command install script
+> ### 3. Multi-provider usage feeder
+>
+> [`examples/external-usage/usage-snapshot.mjs`](examples/external-usage/usage-snapshot.mjs) covers machines that switch Claude Code between providers (CC Switch et al.): every run follows `settings.json → env.ANTHROPIC_BASE_URL` and feeds whichever provider is active — Kimi For Coding (`/coding/v1/usages` → 5h / weekly windows) or DeepSeek (`/user/balance` → balance label). Each snapshot records its `source`, so a snapshot left behind by the other provider is dropped rather than rendered as if it belonged to the current one.
+>
+> On Windows both feeders are scheduled with Task Scheduler instead of cron, launched through a `.vbs` wrapper so the every-few-minutes run does **not** flash a console window (`examples/external-usage/usage-snapshot-refresh.vbs`).
+>
+> ### 4. One-command install script
 >
 > [`scripts/install-fork.sh`](scripts/install-fork.sh) registers this fork as a local marketplace, (re)installs the plugin, and configures the statusLine — idempotent, safe to re-run after `git push`:
 >
@@ -54,6 +60,10 @@ A Claude Code plugin that shows what's happening — context usage, active tools
 > 6. Smoke-tests the installed statusline.
 >
 > Requires: `claude` CLI, Node.js ≥ 18, and (for `--with-kimi`) `env.ANTHROPIC_AUTH_TOKEN` in `~/.claude/settings.json`.
+>
+> On Windows the cron step does not apply — schedule the feeder with Task Scheduler instead, through its hidden `.vbs` launcher (`schtasks /Create /TN "claude-hud-usage-snapshot" /SC MINUTE /MO 3 /TR "wscript.exe //B //Nologo \"…\usage-snapshot-refresh.vbs\"" /F`). Also write `display.externalUsagePath` in Windows form (`C:\Users\...`), never the Git Bash `/c/...` form, because the HUD reads it with Node.
+>
+> **Provider switchers**: tools like CC Switch rewrite `~/.claude/settings.json` wholesale on every switch, which drops `statusLine` and `enabledPlugins` and silently turns the HUD off. Put both keys in the switcher's shared/common config (`~/` level, not per provider) so each switch writes them back — for CC Switch that is its Claude 通用配置, stored in `~/.cc-switch/cc-switch.db` and enabled per provider via `meta.commonConfigEnabled`.
 >
 > ---
 
