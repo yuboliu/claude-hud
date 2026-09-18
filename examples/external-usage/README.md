@@ -69,3 +69,87 @@ non-zero and keeps the previous snapshot. ClaudeHUD quietly ignores
 snapshots older than `externalUsageFreshnessMs`, so a stale feed hides the
 usage line instead of showing wrong data. Check the log first; the most
 common cause is an expired token (HTTP 401).
+
+## usage-snapshot.mjs (multi-provider)
+
+`kimi-usage-snapshot.mjs` is Kimi-only. `usage-snapshot.mjs` covers the case
+where one machine switches Claude Code between providers: every run reads
+`settings.json → env.ANTHROPIC_BASE_URL` and feeds whichever provider is
+active, so switching providers needs no feeder change.
+
+| Base URL host | Endpoint | Snapshot fields |
+|---|---|---|
+| `api.kimi.com` | `GET /coding/v1/usages` | `five_hour`, `seven_day` |
+| `api.deepseek.com` | `GET /user/balance` | `balance_label` (e.g. `¥72.89`) |
+
+Each snapshot also carries a `source` field (ignored by ClaudeHUD) so the
+snapshot left behind by the *other* provider is never rendered as if it
+belonged to the current one:
+
+- success → snapshot overwritten with the current provider's data
+- failure, same provider → previous snapshot kept (network blips don't flap the line)
+- failure or unsupported provider, different provider → snapshot removed
+
+### Setup
+
+```bash
+node usage-snapshot.mjs --verbose        # verify once
+```
+
+Then point ClaudeHUD at the snapshot and widen the freshness window:
+
+```json
+{
+  "display": {
+    "externalUsagePath": "C:\\Users\\<you>\\.claude\\plugins\\claude-hud\\usage-snapshot.json",
+    "externalUsageFreshnessMs": 600000
+  }
+}
+```
+
+`externalUsagePath` must be absolute **and in the host OS path format**: under
+Git Bash `$HOME` expands to `/c/Users/...`, which Node on Windows cannot read,
+so write `C:\Users\...` there.
+
+A custom base URL (proxy or gateway) can force the provider:
+
+```bash
+node usage-snapshot.mjs --provider kimi --base-url https://gateway.internal/kimi
+```
+
+### Windows: Task Scheduler without a flashing console window
+
+Scheduling the `.mjs`, or a `.cmd` wrapper around it, makes Task Scheduler open
+a **black console window on every run** — every 3 minutes, in the user's face.
+`usage-snapshot-refresh.vbs` avoids that: `wscript.exe` is a GUI-subsystem host
+that never allocates a console, and it starts the child hidden while keeping
+the `>>` redirection that `schtasks /TR` cannot express.
+
+```vbs
+cmd = "cmd.exe /d /c " & q & q & nodeExe & q & " " & q & root & "\usage-snapshot.mjs" & q _
+  & " >> " & q & root & "\usage-snapshot.log" & q & " 2>&1" & q
+shell.Run cmd, 0, False      ' 0 = hidden window, False = don't wait
+```
+
+Install both files side by side and register the task:
+
+```powershell
+$d = "$env:USERPROFILE\.claude\plugins\claude-hud"
+Copy-Item usage-snapshot.mjs, usage-snapshot-refresh.vbs $d
+schtasks /Create /TN "claude-hud-usage-snapshot" /SC MINUTE /MO 3 `
+  /TR "wscript.exe //B //Nologo `"$d\usage-snapshot-refresh.vbs`"" /F
+schtasks /Run /TN "claude-hud-usage-snapshot"                          # run once now
+schtasks /Query /TN "claude-hud-usage-snapshot" /FO LIST /V            # last result
+schtasks /Change /TN "claude-hud-usage-snapshot" /DISABLE              # pause it
+```
+
+The launcher resolves its own folder, so the plugin directory can move freely,
+and appends stdout/stderr to `usage-snapshot.log` next to it. Running the
+feeder by hand should stay a plain command, where a console is expected:
+
+```bash
+node usage-snapshot.mjs --verbose
+```
+
+The switch takes effect on the next scheduled run, so for up to one interval
+the HUD can still render the previous provider's snapshot.
