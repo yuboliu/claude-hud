@@ -153,3 +153,8 @@ node usage-snapshot.mjs --verbose
 
 The switch takes effect on the next scheduled run, so for up to one interval
 the HUD can still render the previous provider's snapshot.
+
+Everything above is automated by the fork installer — `scripts/install-fork.ps1`
+on Windows, `scripts/install-fork.sh` elsewhere (which delegates to the
+PowerShell one under Git Bash): it copies the feeder, writes the `display.*`
+keys, registers the schedule and runs a first fetch.

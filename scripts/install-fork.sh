@@ -1,18 +1,26 @@
 #!/usr/bin/env bash
-# install-fork.sh — install the yuboliu/claude-hud fork as a local Claude Code
+# install-fork.sh — install the yuboliu/claude-hud fork as a Claude Code
 # marketplace + plugin, wire up the statusLine, and optionally set up the
-# Kimi For Coding usage feeder.
+# usage feeder and the CC Switch common config.
 #
 # Usage:
-#   scripts/install-fork.sh [--local PATH] [--with-kimi] [--with-cron]
+#   scripts/install-fork.sh [--local PATH] [--with-feeder] [--with-cron] [--no-cc-switch]
 #
 # Options:
-#   --local PATH   Register the marketplace from a local clone of the fork
-#                  instead of cloning yuboliu/claude-hud from GitHub.
-#   --with-kimi    Install the Kimi For Coding usage feeder into the plugin
-#                  data dir and point display.externalUsagePath at it.
-#   --with-cron    Additionally install a crontab entry refreshing the Kimi
-#                  snapshot every 3 minutes (implies --with-kimi).
+#   --local PATH     Register the marketplace from a local clone of the fork
+#                    instead of cloning yuboliu/claude-hud from GitHub.
+#   --with-feeder    Install the multi-provider usage feeder (Kimi For Coding /
+#                    DeepSeek) into the plugin data dir and point
+#                    display.externalUsagePath at its snapshot.
+#   --with-kimi      Alias of --with-feeder, kept for older notes.
+#   --with-cron      Additionally install a crontab entry refreshing the
+#                    snapshot every 3 minutes (implies --with-feeder).
+#   --no-cc-switch   Do not mirror the statusLine into the CC Switch common
+#                    config (that step runs only when ~/.cc-switch exists).
+#
+# Windows (Git Bash / MSYS2) delegates to scripts/install-fork.ps1, which uses
+# Task Scheduler + a hidden .vbs launcher instead of cron and writes the Git
+# Bash flavour of the statusLine command.
 #
 # Idempotent: safe to re-run, e.g. after `git push` to refresh the installed
 # copy from the marketplace clone.
@@ -27,19 +35,35 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 LOCAL_PATH=""
-WITH_KIMI=0
+WITH_FEEDER=0
 WITH_CRON=0
+WITH_CCSWITCH=1
 while [ $# -gt 0 ]; do
   case "$1" in
     --local) LOCAL_PATH="${2:?--local needs a path}"; shift 2 ;;
-    --with-kimi) WITH_KIMI=1; shift ;;
-    --with-cron) WITH_CRON=1; WITH_KIMI=1; shift ;;
-    -h|--help) sed -n '2,20p' "$0"; exit 0 ;;
+    --with-feeder|--with-kimi) WITH_FEEDER=1; shift ;;
+    --with-cron) WITH_CRON=1; WITH_FEEDER=1; shift ;;
+    --no-cc-switch) WITH_CCSWITCH=0; shift ;;
+    -h|--help) sed -n '2,/^set -/p' "$0"; exit 0 ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;
   esac
 done
 
 log() { printf '==> %s\n' "$*"; }
+
+# --- Windows: hand over to the PowerShell installer --------------------------
+case "${OSTYPE:-}" in
+  msys*|cygwin*|win32*)
+    PS_ARGS=()
+    if [ -n "$LOCAL_PATH" ]; then
+      PS_ARGS+=(-MarketplaceSource "$(cygpath -w "$LOCAL_PATH" 2>/dev/null || printf '%s' "$LOCAL_PATH")")
+    fi
+    [ "$WITH_FEEDER" -eq 1 ] || PS_ARGS+=(-SkipFeeder)
+    [ "$WITH_CCSWITCH" -eq 1 ] || PS_ARGS+=(-SkipCCSwitch)
+    log "Windows detected (OSTYPE=$OSTYPE): delegating to scripts/install-fork.ps1"
+    exec powershell -NoProfile -ExecutionPolicy Bypass -File "$REPO_ROOT/scripts/install-fork.ps1" "${PS_ARGS[@]}"
+    ;;
+esac
 
 # --- prerequisites -----------------------------------------------------------
 command -v claude >/dev/null 2>&1 || { echo "error: claude CLI not found in PATH" >&2; exit 1; }
@@ -95,12 +119,12 @@ fs.writeFileSync(p, JSON.stringify(s, null, 2) + "\n");
 ' "$SETTINGS"
 log "statusLine configured in $SETTINGS"
 
-# --- 4. optional: Kimi For Coding usage feeder --------------------------------
-if [ "$WITH_KIMI" -eq 1 ]; then
+# --- 4. optional: multi-provider usage feeder --------------------------------
+if [ "$WITH_FEEDER" -eq 1 ]; then
   mkdir -p "$DATA_DIR"
-  cp "$REPO_ROOT/examples/external-usage/kimi-usage-snapshot.mjs" "$DATA_DIR/"
-  chmod 700 "$DATA_DIR/kimi-usage-snapshot.mjs"
-  log "kimi feeder installed to $DATA_DIR/kimi-usage-snapshot.mjs"
+  cp "$REPO_ROOT/examples/external-usage/usage-snapshot.mjs" "$DATA_DIR/"
+  chmod 700 "$DATA_DIR/usage-snapshot.mjs"
+  log "usage feeder installed to $DATA_DIR/usage-snapshot.mjs"
 
   CFG="$DATA_DIR/config.json"
   [ -f "$CFG" ] || echo '{}' > "$CFG"
@@ -111,28 +135,37 @@ const cfg = JSON.parse(fs.readFileSync(p, "utf8"));
 cfg.display = Object.assign({}, cfg.display, {
   showUsage: true,
   sevenDayThreshold: 0,
-  externalUsagePath: process.env.DATA_DIR + "/kimi-usage-snapshot.json",
+  externalUsagePath: process.env.DATA_DIR + "/usage-snapshot.json",
   externalUsageFreshnessMs: 600000,
 });
 fs.writeFileSync(p, JSON.stringify(cfg, null, 2) + "\n");
 ' "$CFG"
-  log "claude-hud config.json pointed at the kimi snapshot"
+  log "claude-hud config.json pointed at the usage snapshot"
 
-  if "$NODE_BIN" "$DATA_DIR/kimi-usage-snapshot.mjs"; then
-    log "kimi snapshot refreshed"
+  if "$NODE_BIN" "$DATA_DIR/usage-snapshot.mjs"; then
+    log "usage snapshot refreshed"
   else
-    echo "warning: initial kimi snapshot fetch failed (check ANTHROPIC_AUTH_TOKEN in settings.json); cron will retry" >&2
+    echo "warning: initial snapshot fetch failed (check ANTHROPIC_AUTH_TOKEN for the active provider); the schedule will retry" >&2
   fi
 fi
 
 # --- 5. optional: crontab refresh --------------------------------------------
 if [ "$WITH_CRON" -eq 1 ]; then
-  CRON_LINE="*/3 * * * * $NODE_BIN $DATA_DIR/kimi-usage-snapshot.mjs >> $DATA_DIR/kimi-usage.log 2>&1"
-  ( crontab -l 2>/dev/null | grep -v "kimi-usage-snapshot" || true; echo "$CRON_LINE" ) | crontab -
+  CRON_LINE="*/3 * * * * $NODE_BIN $DATA_DIR/usage-snapshot.mjs >> $DATA_DIR/usage-snapshot.log 2>&1"
+  ( crontab -l 2>/dev/null | grep -v "usage-snapshot" || true; echo "$CRON_LINE" ) | crontab -
   log "crontab entry installed: $CRON_LINE"
 fi
 
-# --- 6. verify ---------------------------------------------------------------
+# --- 6. optional: keep the statusLine across CC Switch provider switches ------
+if [ "$WITH_CCSWITCH" -eq 1 ] && [ -f "$HOME/.cc-switch/cc-switch.db" ]; then
+  if "$NODE_BIN" "$REPO_ROOT/scripts/cc-switch-common-config.mjs" --claude-dir "$CLAUDE_DIR"; then
+    log "CC Switch common config mirrors this statusLine"
+  else
+    echo "warning: could not update the CC Switch database (close CC Switch and re-run)" >&2
+  fi
+fi
+
+# --- 7. verify ---------------------------------------------------------------
 log "verifying installed statusline..."
 if echo '{"model":{"display_name":"verify"}}' | sh -c "$STATUSLINE_CMD" >/dev/null 2>&1; then
   log "OK — HUD renders. It appears below the input field after your next message."

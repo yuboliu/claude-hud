@@ -35,35 +35,39 @@ A Claude Code plugin that shows what's happening — context usage, active tools
 >
 > [`examples/external-usage/usage-snapshot.mjs`](examples/external-usage/usage-snapshot.mjs) covers machines that switch Claude Code between providers (CC Switch et al.): every run follows `settings.json → env.ANTHROPIC_BASE_URL` and feeds whichever provider is active — Kimi For Coding (`/coding/v1/usages` → 5h / weekly windows) or DeepSeek (`/user/balance` → balance label). Each snapshot records its `source`, so a snapshot left behind by the other provider is dropped rather than rendered as if it belonged to the current one.
 >
-> On Windows both feeders are scheduled with Task Scheduler instead of cron, launched through a `.vbs` wrapper so the every-few-minutes run does **not** flash a console window (`examples/external-usage/usage-snapshot-refresh.vbs`).
+> On Windows the feeder is scheduled with Task Scheduler instead of cron, launched through a `.vbs` wrapper so the every-few-minutes run does **not** flash a console window (`examples/external-usage/usage-snapshot-refresh.vbs`).
 >
-> ### 4. One-command install script
+> ### 4. One-command install script (fresh machine)
 >
-> [`scripts/install-fork.sh`](scripts/install-fork.sh) registers this fork as a local marketplace, (re)installs the plugin, and configures the statusLine — idempotent, safe to re-run after `git push`:
+> `scripts/install-fork.sh` (macOS/Linux; it delegates to `scripts/install-fork.ps1` when run from Git Bash on Windows) registers the fork marketplace, (re)installs the plugin, writes the statusLine, installs the usage feeder, and mirrors the statusLine into CC Switch's common config. Every step is idempotent and reports what it skipped, so a fresh machine is one command:
 >
 > ```bash
 > git clone https://github.com/yuboliu/claude-hud.git
 > cd claude-hud
-> scripts/install-fork.sh                # marketplace + plugin + statusline
-> scripts/install-fork.sh --with-kimi    # + Kimi usage feeder
-> scripts/install-fork.sh --with-cron    # + crontab refresh every 3 min
+> scripts/install-fork.sh                  # marketplace + plugin + statusLine + feeder + CC Switch
+> scripts/install-fork.sh --no-cc-switch   # skip the CC Switch database step
+> scripts/install-fork.sh --with-cron      # (macOS/Linux) also add a */3 crontab entry
 > scripts/install-fork.sh --local /path/to/clone   # register from a local clone
 > ```
 >
-> What it does (each step is skipped/no-op'd when already applied):
+> ```powershell
+> # Windows
+> powershell -NoProfile -ExecutionPolicy Bypass -File scripts\install-fork.ps1
+> powershell -NoProfile -ExecutionPolicy Bypass -File scripts\install-fork.ps1 -SkipFeeder
+> ```
 >
-> 1. Removes the upstream `claude-hud` marketplace registration if present, then `claude plugin marketplace add yuboliu/claude-hud`.
-> 2. `claude plugin install claude-hud@claude-hud` (user scope).
-> 3. Writes a version-agnostic dynamic-lookup `statusLine` command into `~/.claude/settings.json` (timestamped backup first).
-> 4. `--with-kimi`: installs the feeder into `~/.claude/plugins/claude-hud/`, points `externalUsagePath` at its snapshot, and does a first fetch.
-> 5. `--with-cron`: installs a `*/3 * * * *` crontab entry for the feeder.
-> 6. Smoke-tests the installed statusline.
+> Steps, in order (all no-op when already applied):
 >
-> Requires: `claude` CLI, Node.js ≥ 18, and (for `--with-kimi`) `env.ANTHROPIC_AUTH_TOKEN` in `~/.claude/settings.json`.
+> 1. `claude plugin marketplace add yuboliu/claude-hud` (an existing `claude-hud` registration — upstream or the wrong source — is removed first).
+> 2. `claude plugin install claude-hud@claude-hud -y` + `claude plugin enable` (user scope).
+> 3. Writes the version-agnostic dynamic-lookup `statusLine` (+ `refreshInterval`, default 5) into `<claude dir>/settings.json`; timestamped backup, no BOM, all other keys preserved. Windows writes the Git Bash flavour the platform actually runs.
+> 4. Installs `usage-snapshot.mjs` into `<claude dir>/plugins/claude-hud/`, points `display.externalUsagePath` at `usage-snapshot.json` (Windows form `C:\...`, never the Git Bash `/c/...` form — the HUD reads it with Node), does a first fetch, and schedules it (Windows: Task Scheduler every 3 min via the hidden `.vbs`; macOS/Linux: `--with-cron`).
+> 5. Runs [`scripts/cc-switch-common-config.mjs`](scripts/cc-switch-common-config.mjs) when `~/.cc-switch/cc-switch.db` exists: copies the working `statusLine` into CC Switch's shared Claude 通用配置, adds `enabledPlugins["claude-hud@claude-hud"]`, and enables that common config for every Claude provider. Close CC Switch while it runs, then start it again.
+> 6. Smoke-tests the installed statusLine (Windows hands the command to Git Bash through a temp script, because Windows PowerShell 5.1 mangles embedded quotes).
 >
-> On Windows the cron step does not apply — schedule the feeder with Task Scheduler instead, through its hidden `.vbs` launcher (`schtasks /Create /TN "claude-hud-usage-snapshot" /SC MINUTE /MO 3 /TR "wscript.exe //B //Nologo \"…\usage-snapshot-refresh.vbs\"" /F`). Also write `display.externalUsagePath` in Windows form (`C:\Users\...`), never the Git Bash `/c/...` form, because the HUD reads it with Node.
+> Requires: `claude` CLI, Node.js ≥ 18 (the feeder reads `env.ANTHROPIC_AUTH_TOKEN` for the active provider from `settings.json`), and — on Windows — Git for Windows, since Claude Code runs statusLine commands through Git Bash.
 >
-> **Provider switchers**: tools like CC Switch rewrite `~/.claude/settings.json` wholesale on every switch, which drops `statusLine` and `enabledPlugins` and silently turns the HUD off. Put both keys in the switcher's shared/common config (`~/` level, not per provider) so each switch writes them back — for CC Switch that is its Claude 通用配置, stored in `~/.cc-switch/cc-switch.db` and enabled per provider via `meta.commonConfigEnabled`.
+> **Why step 5 exists**: provider switchers like CC Switch rewrite `~/.claude/settings.json` wholesale on every switch, writing only the new `env` + `model` block. That drops `statusLine` and `enabledPlugins`, silently turning the HUD off. Keeping both keys in the switcher's shared config means every switch writes them back.
 >
 > ---
 
